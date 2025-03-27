@@ -72,19 +72,22 @@ class TRTRecognizer:
         logger = trt.Logger(trt.Logger.WARNING)
         with open(engine_path, "rb") as f, trt.Runtime(logger) as runtime:
             self.engine = runtime.deserialize_cuda_engine(f.read())
+
         self.context = self.engine.create_execution_context()
 
-        self.input_shape = self.engine.get_binding_shape(0)  # (1,1,32,100)
-        self.output_shape = self.engine.get_binding_shape(1)  # (T, C)
-        self.output_size = trt.volume(self.output_shape)
+        # New API: get tensor names
+        self.input_name = self.engine.get_tensor_name(0)
+        self.output_name = self.engine.get_tensor_name(1)
 
-        self.input_dtype = trt.nptype(self.engine.get_binding_dtype(0))
-        self.output_dtype = trt.nptype(self.engine.get_binding_dtype(1))
+        self.input_shape = (1, 1, 32, 100)
+        self.context.set_input_shape(self.input_name, self.input_shape)
+        self.output_shape = self.context.get_tensor_shape(self.output_name)
 
-        # Allocate device memory
+        self.input_dtype = trt.nptype(self.engine.get_tensor_dtype(self.input_name))
+        self.output_dtype = trt.nptype(self.engine.get_tensor_dtype(self.output_name))
+
         self.d_input = cuda.mem_alloc(trt.volume(self.input_shape) * np.dtype(self.input_dtype).itemsize)
-        self.d_output = cuda.mem_alloc(self.output_size * np.dtype(self.output_dtype).itemsize)
-
+        self.d_output = cuda.mem_alloc(trt.volume(self.output_shape) * np.dtype(self.output_dtype).itemsize)
         self.bindings = [int(self.d_input), int(self.d_output)]
 
     def infer(self, image_tensor):
@@ -95,6 +98,9 @@ class TRTRecognizer:
         self.context.execute_v2(self.bindings)
         cuda.memcpy_dtoh(np_output, self.d_output)
 
+        if np_output.ndim == 3:
+            np_output = np_output[0]  # remove batch dimension if present
+
         text = ctc_greedy_decoder(np_output, self.char_dict)
         return filter_number(text)
 
@@ -103,10 +109,11 @@ def main():
     start_time = time.time()
 
     folder_path = r"final_output"
-    engine_path = r"crnn.trt"
+    engine_path = r"crnn_int8.trt"
     valid_exts = ('.png', '.jpg', '.jpeg')
 
     character = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~  '
+
     recognizer = TRTRecognizer(engine_path, character)
 
     count = 0
