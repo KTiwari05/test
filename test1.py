@@ -3,6 +3,7 @@ import os
 import numpy as np
 import logging
 import time
+import argparse
 from ultralytics import YOLO
 from skimage import exposure
 
@@ -11,16 +12,6 @@ POLYGON = np.array([[726,466], [1255,474], [1403,1046], [600, 1057]], dtype=np.i
 MORPH_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
 # ---------------------- Helper Functions ---------------------- #
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
-
 def extract_plate(image, box, margin=0.2):
     try:
         x1, y1, x2, y2 = box
@@ -43,7 +34,6 @@ def apply_polygon_mask(frame):
     cv2.fillPoly(mask, [POLYGON], 255)
     return cv2.bitwise_and(frame, frame, mask=mask)
 
-# ---------------------- Preprocessing Pipeline ---------------------- #
 def denoise_image(image):
     return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
 
@@ -89,7 +79,7 @@ def fill_black_holes(binary_image):
     return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, MORPH_KERNEL)
 
 def full_preprocess_pipeline(image):
-    steps = [
+    for step in [
         denoise_image,
         adjust_gamma,
         enhance_image_colors,
@@ -97,8 +87,7 @@ def full_preprocess_pipeline(image):
         adaptive_thresholding,
         sharpen_image,
         fill_black_holes
-    ]
-    for step in steps:
+    ]:
         image = step(image)
     return image
 
@@ -116,25 +105,35 @@ def quick_precheck(image, threshold=0.01):
 
 # ---------------------- Main ---------------------- #
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--rtsp_url", type=str, default="", help="RTSP URL or leave blank for file mode")
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
-
-    # Use GStreamer pipeline to load video
-    video_path = "test3plate.mp4"
-    gst_pipeline = (
-        f"filesrc location={video_path} ! qtdemux ! h264parse ! nvv4l2decoder ! "
-        "nvvidconv ! video/x-raw, format=BGRx ! "
-        "videoconvert ! video/x-raw, format=BGR ! appsink"
-    )
-    cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-
-    if not cap.isOpened():
-        logging.error("Unable to open video via GStreamer.")
-        return
-
-    model = YOLO("best2.engine")  # Ensure this is built for Jetson Nano
-
     output_dir = "final_output1"
     os.makedirs(output_dir, exist_ok=True)
+
+    # ---- Video Capture Init ---- #
+    if args.rtsp_url.strip() != "":
+        gst_pipeline = (
+            f"rtspsrc location={args.rtsp_url} ! "
+            "rtph264depay ! decodebin ! videoconvert ! "
+            "video/x-raw, format=BGR ! appsink drop=1"
+        )
+        print(f"RTSP URL: {args.rtsp_url}")
+        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        if not cap.isOpened():
+            print("Warning: Unable to open RTSP stream. Falling back to local 'test3plate.mp4'")
+            cap = cv2.VideoCapture("test3plate.mp4")
+    else:
+        print("No RTSP URL provided. Using local file: test3plate.mp4")
+        cap = cv2.VideoCapture("test3plate.mp4")
+
+    if not cap.isOpened():
+        logging.error("Unable to open video source.")
+        return
+
+    model = YOLO("best2.engine")  # Ensure this is Jetson-compatible
 
     frame_count = 0
     saved_frame_count = 0
