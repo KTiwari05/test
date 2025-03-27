@@ -134,7 +134,7 @@ def main():
     output_dir = "final_output1"
     os.makedirs(output_dir, exist_ok=True)
 
-    model = YOLO("best2.enigne", device="cuda")
+    model = YOLO("best2.engine")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         logging.error("Unable to open video file.")
