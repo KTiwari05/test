@@ -282,25 +282,27 @@ class SpeedEstimator:
 
 # ==================== OCR / PLATE UTILS ====================
 def denoise_image_gpu(image):
-    # Upload to GPU
-    gpu_img = cv2.cuda_GpuMat()
-    gpu_img.upload(image)
+    try:
+        gpu_img = cv2.cuda_GpuMat()
+        gpu_img.upload(image)
 
-    # Convert BGR → BGRA (fastNlMeansDenoisingColored requires CV_8UC4)
-    gpu_bgra = cv2.cuda.cvtColor(gpu_img, cv2.COLOR_BGR2BGRA)
+        # Convert BGR → BGRA for denoising
+        gpu_bgra = cv2.cuda.cvtColor(gpu_img, cv2.COLOR_BGR2BGRA)
 
-    # Create destination with same size and type
-    gpu_dst = cv2.cuda_GpuMat()
-    gpu_dst.create(gpu_bgra.size(), gpu_bgra.type())
+        # Allocate output
+        gpu_dst = cv2.cuda_GpuMat()
+        gpu_dst.create(gpu_bgra.size(), gpu_bgra.type())
 
-    # Denoise
-    cv2.cuda.fastNlMeansDenoisingColored(gpu_bgra, gpu_dst, 10, 10, 7, 21)
+        # Run denoising
+        cv2.cuda.fastNlMeansDenoisingColored(gpu_bgra, gpu_dst, 10, 10, 7, 21)
 
-    # Convert back to BGR
-    gpu_denoised_bgr = cv2.cuda.cvtColor(gpu_dst, cv2.COLOR_BGRA2BGR)
+        # Convert back to BGR
+        gpu_bgr = cv2.cuda.cvtColor(gpu_dst, cv2.COLOR_BGRA2BGR)
+        return gpu_bgr.download()
 
-    return gpu_denoised_bgr.download()
-
+    except cv2.error as e:
+        print("[WARN] CUDA denoising failed, falling back to CPU:", e)
+        return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
 
 
 def adjust_gamma_gpu(image):
