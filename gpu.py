@@ -395,7 +395,7 @@ def fill_black_holes(binary_image):
 def full_preprocess_pipeline(plate_image):
 
     print("Using GPU:", cv2.cuda.getCudaEnabledDeviceCount() > 0)
-    plate_image = denoise_image_gpu(plate_image)
+    plate_image = denoise_image(plate_image)
     plate_image = adjust_gamma_gpu(plate_image)
     plate_image = enhance_image_colors_gpu(plate_image)
     plate_image = remove_white_pixels(plate_image)
