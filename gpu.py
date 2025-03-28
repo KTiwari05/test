@@ -284,22 +284,32 @@ class SpeedEstimator:
 def denoise_image_gpu(image):
     gpu_img = cv2.cuda_GpuMat()
     gpu_img.upload(image)
-    return cv2.cuda.fastNlMeansDenoisingColored(gpu_img, None, 10, 10, 7, 21).download()
+    
+    gpu_dst = cv2.cuda_GpuMat()  # Create destination GpuMat
+    cv2.cuda.fastNlMeansDenoisingColored(gpu_img, gpu_dst, 10, 10, 7, 21)
+    
+    return gpu_dst.download()
 
 
 def adjust_gamma_gpu(image):
     gpu_img = cv2.cuda_GpuMat()
     gpu_img.upload(image)
 
-    # Convert to grayscale to compute brightness (CPU side)
+    # Estimate brightness from CPU
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     brightness = np.mean(gray)
     gamma = 0.8 if brightness < 100 else 1.2 if brightness > 150 else 1.0
 
-    # Normalize to [0,1] float, apply gamma, then back to [0,255]
-    gpu_img_float = cv2.cuda.normalize(gpu_img, None, 0, 1.0, cv2.NORM_MINMAX, cv2.CV_32F)
+    # Normalize to [0,1] float32
+    gpu_img_float = cv2.cuda_GpuMat()
+    cv2.cuda.normalize(gpu_img, gpu_img_float, 0, 1.0, cv2.NORM_MINMAX, cv2.CV_32F)
+
+    # Apply gamma correction
     gpu_gamma = cv2.cuda.pow(gpu_img_float, gamma)
-    gpu_out = cv2.cuda.normalize(gpu_gamma, None, 0, 255.0, cv2.NORM_MINMAX, cv2.CV_8U)
+
+    # Scale back to [0,255] uchar
+    gpu_out = cv2.cuda_GpuMat()
+    cv2.cuda.normalize(gpu_gamma, gpu_out, 0, 255.0, cv2.NORM_MINMAX, cv2.CV_8U)
 
     return gpu_out.download()
 
@@ -308,26 +318,35 @@ def enhance_image_colors_gpu(image):
     gpu_img = cv2.cuda_GpuMat()
     gpu_img.upload(image)
 
+    # Convert to LAB
     gpu_lab = cv2.cuda.cvtColor(gpu_img, cv2.COLOR_BGR2Lab)
-    lab = gpu_lab.download()
+    lab = gpu_lab.download()  # No CUDA split, so fallback to CPU split
 
+    # Split LAB on CPU
     l, a, b = cv2.split(lab)
 
+    # CLAHE on L channel
     clahe = cv2.cuda.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
     gpu_l = cv2.cuda_GpuMat()
     gpu_l.upload(l)
     l_clahe = clahe.apply(gpu_l).download()
 
-    a_eq = cv2.cuda.equalizeHist(cv2.cuda_GpuMat().upload(a)).download()
-    b_eq = cv2.cuda.equalizeHist(cv2.cuda_GpuMat().upload(b)).download()
+    # Equalize a/b channels (GPU)
+    a_gpu = cv2.cuda_GpuMat()
+    a_gpu.upload(a)
+    a_eq = cv2.cuda.equalizeHist(a_gpu).download()
 
+    b_gpu = cv2.cuda_GpuMat()
+    b_gpu.upload(b)
+    b_eq = cv2.cuda.equalizeHist(b_gpu).download()
+
+    # Merge LAB back and convert to BGR
     lab_eq = cv2.merge([l_clahe, a_eq, b_eq])
     gpu_lab_eq = cv2.cuda_GpuMat()
     gpu_lab_eq.upload(lab_eq)
 
-    return cv2.cuda.cvtColor(gpu_lab_eq, cv2.COLOR_Lab2BGR).download()
-
-
+    gpu_bgr = cv2.cuda.cvtColor(gpu_lab_eq, cv2.COLOR_Lab2BGR)
+    return gpu_bgr.download()
 
 def remove_white_pixels(image):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -629,7 +648,7 @@ def _do_ocr_for_plate(frame, plate_box, forklift_tracker, nearest_forklift_id, r
     plate_crop = extract_plate(frame, plate_box)
     if plate_crop is None or not quick_precheck(plate_crop):
         return None
-    plate_crop = cv2.cuda_GpuMat(plate_crop)
+    #plate_crop = cv2.cuda_GpuMat(plate_crop)
     processed_plate = full_preprocess_pipeline(plate_crop)
     base_angle = find_base_angle(processed_plate)
     angle_offsets = [-10, -5, 0, 5, 10]
