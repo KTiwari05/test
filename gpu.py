@@ -281,29 +281,8 @@ class SpeedEstimator:
 
 
 # ==================== OCR / PLATE UTILS ====================
-def denoise_image_gpu(image):
-    try:
-        gpu_img = cv2.cuda_GpuMat()
-        gpu_img.upload(image)
-
-        # Convert BGR → BGRA for denoising
-        gpu_bgra = cv2.cuda.cvtColor(gpu_img, cv2.COLOR_BGR2BGRA)
-
-        # Allocate output
-        gpu_dst = cv2.cuda_GpuMat()
-        gpu_dst.create(gpu_bgra.size(), gpu_bgra.type())
-
-        # Run denoising
-        cv2.cuda.fastNlMeansDenoisingColored(gpu_bgra, gpu_dst, 10, 10, 7, 21)
-
-        # Convert back to BGR
-        gpu_bgr = cv2.cuda.cvtColor(gpu_dst, cv2.COLOR_BGRA2BGR)
-        return gpu_bgr.download()
-
-    except cv2.error as e:
-        print("[WARN] CUDA denoising failed, falling back to CPU:", e)
-        return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
-
+def denoise_image(image):
+    return cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
 
 def adjust_gamma_gpu(image):
     gpu_img = cv2.cuda_GpuMat()
